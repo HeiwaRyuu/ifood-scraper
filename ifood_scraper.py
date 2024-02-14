@@ -2,8 +2,9 @@ from playwright.sync_api import Playwright, sync_playwright, expect
 from bs4 import BeautifulSoup
 import pandas as pd
 import datetime as dt
+import time
 
-DEFAULT_TIMEOUT = 5000
+DEFAULT_TIMEOUT = 2
 MAX_ERROR_TRIES = 3
 
 def generate_df(merchants, address):
@@ -74,22 +75,34 @@ def generate_df(merchants, address):
         distance_lst.append(distance)
         delivery_fee_lst.append(delivery_fee)
 
-        data = {"data":date_lst, "codigo_estabelecimento":code_lst, "endereco_universidade":address_lst, 
-        "nome_restaurante":name_lst, "categoria":classification_lst, "horario_coleta":scrape_time_lst, "status":status_lst, 
-        "score_estrela":rating_lst, "foto":have_photo_lst, "distancia":distance_lst, 
-        "taxa_entrega":delivery_fee_lst}
-        df = pd.DataFrame(data)
-        return df
+    data = {"data":date_lst, "codigo_estabelecimento":code_lst, "endereco_universidade":address_lst, 
+    "nome_restaurante":name_lst, "categoria":classification_lst, "horario_coleta":scrape_time_lst, "status":status_lst, 
+    "score_estrela":rating_lst, "foto":have_photo_lst, "distancia":distance_lst, 
+    "taxa_entrega":delivery_fee_lst}
+    df = pd.DataFrame(data)
+    return df
 
 
 def fetch_merchants(page, number_of_pages):
     counter = 0
-    text_selector = ".cardstack-nextcontent > button:first-of-type"
-    while(page.locator(".cardstack-nextcontent")):
+    button_selector = ".cardstack-nextcontent > button:first-of-type"
+    selector = 'section.cardstack-section[data-card-name="NEXT_CONTENT"]'
+    while(True):
         try:
-            page.click(text_selector)
+            time.sleep(DEFAULT_TIMEOUT)
+            if(not page.query_selector(selector)):
+                print("Reached end of page...")
+                break
+            page.click(button_selector)
         except Exception as e:
-            print(f"Exception: {e}")
+            ## THIS ONLY HAPPENS WHEN WHILE FAILS TO CHECK IT HAS REACHED THE END
+            ## AND WHEN TRYING TO CLICK BUTTON FAILS BECAUSE BUTTON NO LONGER EXISTS
+            ## THEREFORE WE RETURN TRUE
+            if(not page.query_selector(selector)):
+                print("Reached end of page...")
+                break
+            print(page.query_selector(selector))
+            print(f"Exception HERE: {e}")
             return False
         counter += 1
         if(number_of_pages!="ALL"):
@@ -103,7 +116,7 @@ def run(playwright: Playwright) -> None:
     df_lst = []
     error_lst = []
     df_enderecos = pd.read_excel("enderecos.xlsx", sheet_name="ENDERECOS")
-    # df_enderecos = df_enderecos[df_enderecos["ENDERECO"]==df_enderecos.head(1)["ENDERECO"].values[0]]
+    df_enderecos = df_enderecos[df_enderecos["COLETAR"]=="S"]
     for _, row in df_enderecos.iterrows():
         address = row["ENDERECO"]
         number = str(row["NUMERO"])        
@@ -141,16 +154,20 @@ def run(playwright: Playwright) -> None:
             continue
 
         try:
-            selector = "text='Número'"
-            element = page.wait_for_selector(selector, timeout=DEFAULT_TIMEOUT)
-            element.click()
-            element.fill(number)
-            page.get_by_role("button", name="Buscar com número").click()
+            time.sleep(DEFAULT_TIMEOUT)
+            selector = "input.form-input__field"
+            if(page.query_selector(selector)):
+                element = page.wait_for_selector(selector)
+                element.click()
+                element.fill(number)
+                page.get_by_role("button", name="Buscar com número").click()
         except:
             print("No number required for this address...")
-
+        
         try:
-            page.get_by_role("button", name="Confirmar localização").click()
+            time.sleep(DEFAULT_TIMEOUT)
+            selector = 'button:has-text("Confirmar localização")'
+            page.locator(selector).click()
             page.get_by_role("button", name="Salvar endereço").click()
         except Exception as e:
             print(f"Exception: {e}")
@@ -182,12 +199,11 @@ def run(playwright: Playwright) -> None:
             browser.close()
             continue
 
-        
         ## FETCH MERCHANTS DATA
         merchants = page.locator(".merchant-list-v2__wrapper")
         if merchants:
             df = generate_df(merchants, address)
-            if not df.empty():
+            if not df.empty:
                 df_lst.append(df)
             else:
                 print(f"No HTML on {address}")
@@ -204,7 +220,7 @@ def run(playwright: Playwright) -> None:
 
     if(error_lst):
         with open("error_addresses.txt", "w") as f:
-            f.write(error_lst)
+            f.write(str(error_lst))
 
 
 with sync_playwright() as playwright:
