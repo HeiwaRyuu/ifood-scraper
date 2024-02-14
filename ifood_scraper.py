@@ -3,17 +3,19 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import datetime as dt
 import time
+import os
 
 DEFAULT_TIMEOUT = 2
 MAX_ERROR_TRIES = 3
 
 def generate_df(merchants, address):
-    if not merchants:
+    try:
+        html = merchants.inner_html()
+        soup = BeautifulSoup(html, "html.parser")
+    except Exception as e:
+        print(f"Exception: {e}")
         data = {"empty":[]}
         return pd.DataFrame(data)
-
-    html = merchants.inner_html()
-    soup = BeautifulSoup(html, "html.parser")
 
     date_and_time = dt.datetime.now()
     date_lst = []
@@ -214,7 +216,9 @@ def run(playwright: Playwright) -> None:
 
     if(df_lst):
         df = pd.concat(df_lst)
-        df.to_excel("ifood_data.xlsx", sheet_name="INFO_RESTAURANTES", index=False)
+        if(not os.path.exists(f"{os.curdir}\\coletas")):
+            os.mkdir(f"{os.curdir}\\coletas")
+        df.to_excel(f"coletas\\ifood_data_{dt.datetime.now().strftime("%d-%m-%Y--%H-%M")}.xlsx", sheet_name="INFO_RESTAURANTES", index=False)
     else:
         print("An Error has occurred in all addresses fetching task. Please, retry.")
 
