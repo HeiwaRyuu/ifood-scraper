@@ -17,7 +17,6 @@ def generate_df(merchants, address):
         data = {"empty":[]}
         return pd.DataFrame(data)
 
-    date_and_time = dt.datetime.now()
     date_lst = []
     code_lst = []
     address_lst = []
@@ -65,6 +64,7 @@ def generate_df(merchants, address):
         except:
             delivery_fee = "Sem Informação"
 
+        date_and_time = dt.datetime.now()
         date_lst.append(date_and_time.strftime("%d/%m/%Y"))
         code_lst.append(index+1)
         address_lst.append(address)
