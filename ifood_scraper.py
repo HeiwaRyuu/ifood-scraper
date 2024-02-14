@@ -135,84 +135,91 @@ def run(playwright: Playwright) -> None:
             number_of_pages = "ALL"
 
         print(f"{address} | {number} | {number_of_pages}")
+        tries = 0
+        flag_success = False
+        while(tries < MAX_ERROR_TRIES and not flag_success):
+            browser = playwright.chromium.launch(headless=False)
+            context = browser.new_context()
+            page = context.new_page()
+            try:
+                page.goto("https://www.ifood.com.br/")
+                page.get_by_placeholder("Em qual endereço você está?").click()
+                page.get_by_role("button", name="Buscar endereço e número").click()
+                page.get_by_role("textbox", name="Buscar endereço e número").fill(address)
 
-        browser = playwright.chromium.launch(headless=False)
-        context = browser.new_context()
-        page = context.new_page()
-        try:
-            page.goto("https://www.ifood.com.br/")
-            page.get_by_placeholder("Em qual endereço você está?").click()
-            page.get_by_role("button", name="Buscar endereço e número").click()
-            page.get_by_role("textbox", name="Buscar endereço e número").fill(address)
+                selector = ".address-search-list > li:first-of-type"
+                page.wait_for_selector(selector)
+                page.locator(selector).click()
+            except Exception as e:
+                print(f"Exception: {e}")
+                tries += 1
+                if address not in error_lst: error_lst.append(address)
+                context.close()
+                browser.close()
+                continue
 
-            selector = ".address-search-list > li:first-of-type"
-            page.wait_for_selector(selector)
-            page.locator(selector).click()
-        except Exception as e:
-            print(f"Exception: {e}")
-            error_lst.append(address)
+            try:
+                time.sleep(DEFAULT_TIMEOUT)
+                selector = "input.form-input__field"
+                if(page.query_selector(selector)):
+                    element = page.wait_for_selector(selector)
+                    element.click()
+                    element.fill(number)
+                    page.get_by_role("button", name="Buscar com número").click()
+            except:
+                print("No number required for this address...")
+            
+            try:
+                time.sleep(DEFAULT_TIMEOUT)
+                selector = 'button:has-text("Confirmar localização")'
+                page.locator(selector).click()
+                page.get_by_role("button", name="Salvar endereço").click()
+            except Exception as e:
+                print(f"Exception: {e}")
+                tries += 1
+                if address not in error_lst: error_lst.append(address)
+                context.close()
+                browser.close()
+                continue
+            
+            try:
+                page.goto("https://www.ifood.com.br/restaurantes")
+            except Exception as e:
+                print(f"Exception: {e}")
+                tries += 1
+                if address not in error_lst: error_lst.append(address)
+                context.close()
+                browser.close()
+                continue
+
+            ## LOOP THROUGH ALL PAGES
+            try_count = 0
+            while(try_count < MAX_ERROR_TRIES):
+                merchants_status = fetch_merchants(page, number_of_pages)
+                if merchants_status:
+                    break
+                try_count += 1
+            if(try_count >= MAX_ERROR_TRIES):
+                print(f"Max tries exceeded for looping merchants on {address}")
+                if address not in error_lst: error_lst.append(address)
+                tries += 1
+                context.close()
+                browser.close()
+                continue
+
+            ## FETCH MERCHANTS DATA
+            merchants = page.locator(".merchant-list-v2__wrapper")
+            if merchants:
+                df = generate_df(merchants, address)
+                if not df.empty:
+                    df_lst.append(df)
+                else:
+                    print(f"No HTML on {address}")
+                    if address not in error_lst: error_lst.append(address)
+            # ---------------------
             context.close()
             browser.close()
-            continue
-
-        try:
-            time.sleep(DEFAULT_TIMEOUT)
-            selector = "input.form-input__field"
-            if(page.query_selector(selector)):
-                element = page.wait_for_selector(selector)
-                element.click()
-                element.fill(number)
-                page.get_by_role("button", name="Buscar com número").click()
-        except:
-            print("No number required for this address...")
-        
-        try:
-            time.sleep(DEFAULT_TIMEOUT)
-            selector = 'button:has-text("Confirmar localização")'
-            page.locator(selector).click()
-            page.get_by_role("button", name="Salvar endereço").click()
-        except Exception as e:
-            print(f"Exception: {e}")
-            error_lst.append(address)
-            context.close()
-            browser.close()
-            continue
-        
-        try:
-            page.goto("https://www.ifood.com.br/restaurantes")
-        except Exception as e:
-            print(f"Exception: {e}")
-            error_lst.append(address)
-            context.close()
-            browser.close()
-            continue
-
-        ## LOOP THROUGH ALL PAGES
-        try_count = 0
-        while(try_count < MAX_ERROR_TRIES):
-            merchants_status = fetch_merchants(page, number_of_pages)
-            if merchants_status:
-                break
-            try_count += 1
-        if(try_count >= MAX_ERROR_TRIES):
-            print(f"Max tries exceeded for looping merchants on {address}")
-            error_lst.append(address)
-            context.close()
-            browser.close()
-            continue
-
-        ## FETCH MERCHANTS DATA
-        merchants = page.locator(".merchant-list-v2__wrapper")
-        if merchants:
-            df = generate_df(merchants, address)
-            if not df.empty:
-                df_lst.append(df)
-            else:
-                print(f"No HTML on {address}")
-                error_lst.append(address)
-        # ---------------------
-        context.close()
-        browser.close()
+            flag_success = True
 
     if(df_lst):
         df = pd.concat(df_lst)
