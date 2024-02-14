@@ -3,40 +3,17 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import datetime as dt
 
-def run(playwright: Playwright) -> None:
-    address = "Avenida Joao XXIII Saraiva"
-    browser = playwright.chromium.launch(headless=False)
-    context = browser.new_context()
-    page = context.new_page()
-    page.goto("https://www.ifood.com.br/")
-    page.get_by_placeholder("Em qual endereço você está?").click()
-    page.get_by_role("button", name="Buscar endereço e número").click()
-    page.get_by_role("textbox", name="Buscar endereço e número").fill(address)
-    page.locator("[data-test-id=\"button-address-EkpBdmVuaWRhIEpvw6NvIFhYSUlJIC0gU2FyYWl2YSwgVWJlcmzDom5kaWEgLSBTdGF0ZSBvZiBNaW5hcyBHZXJhaXMsIEJyYXppbCIuKiwKFAoSCUOjWq0LRaSUEdbe7n3KRJrbEhQKEgnzUTssEEWklBFxZ2RXqQDEkw\"]").get_by_role("button").click()
-    page.get_by_label("Número", exact=True).click()
-    page.get_by_label("Número", exact=True).fill("438")
-    page.get_by_role("button", name="Buscar com número").click()
-    page.get_by_role("button", name="Confirmar localização").click()
-    page.get_by_role("button", name="Salvar endereço").click()
-    page.get_by_role("link", name="Restaurantes").click()
+DEFAULT_TIMEOUT = 5000
+MAX_ERROR_TRIES = 3
 
-    counter = 0
-    text_selector = 'text="Ver mais"'
-    while(True):
-        try:
-            page.wait_for_selector(text_selector)
-            page.click(text_selector)
-            counter += 1
-        except:
-            print(f"Counter for 'Ver mais' button pressed: {counter}")
-            break
+def generate_df(merchants, address):
+    if not merchants:
+        data = {"empty":[]}
+        return pd.DataFrame(data)
 
-    merchants = page.locator(".merchant-list-v2__wrapper")
     html = merchants.inner_html()
     soup = BeautifulSoup(html, "html.parser")
 
-    # Find all elements with the class "merchant-list-v2__item-wrapper"
-    item_wrappers = soup.find_all(class_="merchant-list-v2__item-wrapper")
     date_and_time = dt.datetime.now()
     date_lst = []
     code_lst = []
@@ -47,24 +24,30 @@ def run(playwright: Playwright) -> None:
     classification_lst = []
     have_photo_lst = []
     distance_lst = []
-    delivery_fee = []
+    status_lst = []
+    delivery_fee_lst = []
+    
+    item_wrappers = soup.find_all(class_="merchant-list-v2__item-wrapper")
     for index, item in enumerate(item_wrappers):
-        # Extract text from elements within the item wrapper
         merchant_name = item.find(class_="merchant-v2__name").get_text(strip=True) if item.find(class_="merchant-v2__name") else "Sem Nome"
         info = item.find(class_="merchant-v2__info").get_text(strip=True) if item.find(class_="merchant-v2__info") else "Sem Informação"
+        ## IF RESTAURANT HAS ALL 3 INFOS
         try:
             rating, classification, distance = info.split("•")
         except:
+            ## IF RESTAURANT DOES NOT HAVE RATINGS YET
             try:
                 classification, distance = info.split("•")
                 rating = "Sem Informação"
             except:
+                ## IF FOR SOME REASON, NO INFO IS AVAILABLE
                 rating = "Sem Informação"
                 classification = "Sem Informação"
                 distance = "Sem Informação"
-        have_photo = "Sim" if item.find(class_="cardstack-image") else "Não"
+        have_photo = "Sim" if item.find(class_="cardstack-image").find("img") else "Não"
         footer_info = item.find(class_="merchant-v2__footer").get_text(strip=True) if item.find(class_="merchant-v2__footer") else "Sem Informação"
-        delivery_fee_str = "0" if "Grátis" in footer_info else footer_info.split("•")[-1].replace("R$", "").replace(",", ".")[1:]
+        status = "Fechado" if "Fechado" in footer_info else "Aberto"
+        delivery_fee = "0" if "Grátis" in footer_info else footer_info.split("•")[-1].replace("R$", "").replace(",", ".")[1:]
 
         try:
             rating = eval(rating)
@@ -75,31 +58,153 @@ def run(playwright: Playwright) -> None:
         except:
             distance = "Sem Informação"
         try:
-            delivery_fee_str = eval(delivery_fee_str)
+            delivery_fee = eval(delivery_fee)
         except:
-            delivery_fee_str = "Sem Informação"
+            delivery_fee = "Sem Informação"
 
         date_lst.append(date_and_time.strftime("%d/%m/%Y"))
         code_lst.append(index+1)
         address_lst.append(address)
         name_lst.append(merchant_name)
         scrape_time_lst.append(date_and_time.strftime("%H:%M"))
+        status_lst.append(status)
         rating_lst.append(rating)
         classification_lst.append(classification)
         have_photo_lst.append(have_photo)
         distance_lst.append(distance)
-        delivery_fee.append(delivery_fee_str)
+        delivery_fee_lst.append(delivery_fee)
 
-    data = {"data":date_lst, "codigo_estabelecimento":code_lst, "endereco_universidade":address_lst, 
-            "nome_restaurante":name_lst, "categoria":classification_lst, "horario_coleta":scrape_time_lst, 
-            "score_estrela":rating_lst, "foto":have_photo_lst, "distancia":distance_lst, 
-            "taxa_entrega":delivery_fee}
-    df = pd.DataFrame(data)
-    df.to_excel("ifood_data.xlsx", index=False)
+        data = {"data":date_lst, "codigo_estabelecimento":code_lst, "endereco_universidade":address_lst, 
+        "nome_restaurante":name_lst, "categoria":classification_lst, "horario_coleta":scrape_time_lst, "status":status_lst, 
+        "score_estrela":rating_lst, "foto":have_photo_lst, "distancia":distance_lst, 
+        "taxa_entrega":delivery_fee_lst}
+        df = pd.DataFrame(data)
+        return df
 
-    # ---------------------
-    context.close()
-    browser.close()
+
+def fetch_merchants(page, number_of_pages):
+    counter = 0
+    text_selector = ".cardstack-nextcontent > button:first-of-type"
+    while(page.locator(".cardstack-nextcontent")):
+        try:
+            page.click(text_selector)
+        except Exception as e:
+            print(f"Exception: {e}")
+            return False
+        counter += 1
+        if(number_of_pages!="ALL"):
+            if(counter>=number_of_pages):
+                print(f"Counter for 'Ver mais' button pressed: {counter}\nTotal of {counter+1} pages.")
+                return True
+    return True
+
+
+def run(playwright: Playwright) -> None:
+    df_lst = []
+    error_lst = []
+    df_enderecos = pd.read_excel("enderecos.xlsx", sheet_name="ENDERECOS")
+    # df_enderecos = df_enderecos[df_enderecos["ENDERECO"]==df_enderecos.head(1)["ENDERECO"].values[0]]
+    for _, row in df_enderecos.iterrows():
+        address = row["ENDERECO"]
+        number = str(row["NUMERO"])        
+        number_of_pages = str(row["NUMERO_DE_PAGINAS"])
+        try:
+            number = str(eval(number))
+        except Exception as e:
+            print(f"Exception: {e}")
+            number = "S/N"
+        try:
+            number_of_pages = eval(number_of_pages)
+        except Exception as e:
+            print(f"Exception: {e}")
+            number_of_pages = "ALL"
+
+        print(f"{address} | {number} | {number_of_pages}")
+
+        browser = playwright.chromium.launch(headless=False)
+        context = browser.new_context()
+        page = context.new_page()
+        try:
+            page.goto("https://www.ifood.com.br/")
+            page.get_by_placeholder("Em qual endereço você está?").click()
+            page.get_by_role("button", name="Buscar endereço e número").click()
+            page.get_by_role("textbox", name="Buscar endereço e número").fill(address)
+
+            selector = ".address-search-list > li:first-of-type"
+            page.wait_for_selector(selector)
+            page.locator(selector).click()
+        except Exception as e:
+            print(f"Exception: {e}")
+            error_lst.append(address)
+            context.close()
+            browser.close()
+            continue
+
+        try:
+            selector = "text='Número'"
+            element = page.wait_for_selector(selector, timeout=DEFAULT_TIMEOUT)
+            element.click()
+            element.fill(number)
+            page.get_by_role("button", name="Buscar com número").click()
+        except:
+            print("No number required for this address...")
+
+        try:
+            page.get_by_role("button", name="Confirmar localização").click()
+            page.get_by_role("button", name="Salvar endereço").click()
+        except Exception as e:
+            print(f"Exception: {e}")
+            error_lst.append(address)
+            context.close()
+            browser.close()
+            continue
+        
+        try:
+            page.goto("https://www.ifood.com.br/restaurantes")
+        except Exception as e:
+            print(f"Exception: {e}")
+            error_lst.append(address)
+            context.close()
+            browser.close()
+            continue
+
+        ## LOOP THROUGH ALL PAGES
+        try_count = 0
+        while(try_count < MAX_ERROR_TRIES):
+            merchants_status = fetch_merchants(page, number_of_pages)
+            if merchants_status:
+                break
+            try_count += 1
+        if(try_count >= MAX_ERROR_TRIES):
+            print(f"Max tries exceeded for looping merchants on {address}")
+            error_lst.append(address)
+            context.close()
+            browser.close()
+            continue
+
+        
+        ## FETCH MERCHANTS DATA
+        merchants = page.locator(".merchant-list-v2__wrapper")
+        if merchants:
+            df = generate_df(merchants, address)
+            if not df.empty():
+                df_lst.append(df)
+            else:
+                print(f"No HTML on {address}")
+                error_lst.append(address)
+        # ---------------------
+        context.close()
+        browser.close()
+
+    if(df_lst):
+        df = pd.concat(df_lst)
+        df.to_excel("ifood_data.xlsx", sheet_name="INFO_RESTAURANTES", index=False)
+    else:
+        print("An Error has occurred in all addresses fetching task. Please, retry.")
+
+    if(error_lst):
+        with open("error_addresses.txt", "w") as f:
+            f.write(error_lst)
 
 
 with sync_playwright() as playwright:
