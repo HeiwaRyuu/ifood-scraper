@@ -218,9 +218,8 @@ def run(playwright: Playwright) -> None:
     else:
         print("An Error has occurred in all addresses fetching task. Please, retry.")
 
-    if(error_lst):
-        with open("error_addresses.txt", "w") as f:
-            f.write(str(error_lst))
+    with open("error_addresses.txt", "w") as f:
+        f.write(str(error_lst))
 
 
 with sync_playwright() as playwright:
