@@ -225,7 +225,8 @@ def run(playwright: Playwright) -> None:
         df = pd.concat(df_lst)
         if(not os.path.exists(f"{os.curdir}\\coletas")):
             os.mkdir(f"{os.curdir}\\coletas")
-        df.to_excel(f"coletas\\ifood_data_{dt.datetime.now().strftime("%d-%m-%Y--%H-%M")}.xlsx", sheet_name="INFO_RESTAURANTES", index=False)
+        filename = f"ifood_data_{dt.datetime.now().strftime('%d-%m-%Y--%H-%M')}.xlsx"
+        df.to_excel(f"coletas\\{filename}", sheet_name="INFO_RESTAURANTES", index=False)
     else:
         print("An Error has occurred in all addresses fetching task. Please, retry.")
 
