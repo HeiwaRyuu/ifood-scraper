@@ -160,8 +160,10 @@ def run(playwright: Playwright) -> None:
 
             try:
                 time.sleep(DEFAULT_TIMEOUT)
-                selector = "input.form-input__field"
-                if(page.query_selector(selector)):
+                selector = 'button:has-text("Confirmar localização")'
+                if(not page.query_selector(selector)): ## CHECKING IF "CONFIRMAR LOCALIZAÇÃO IS ALREADY VISIBLE, IF SO, SKIP NUMBER INSERTION"
+                    print("NUMBER FIELD VISIBLE")
+                    selector = "input.form-input__field"
                     element = page.wait_for_selector(selector)
                     element.click()
                     element.fill(number)
