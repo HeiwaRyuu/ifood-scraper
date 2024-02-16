@@ -1,4 +1,5 @@
-from playwright.sync_api import Playwright, sync_playwright, expect
+from playwright.sync_api import Playwright, sync_playwright
+from playwright.sync_api import TimeoutError
 from bs4 import BeautifulSoup
 import pandas as pd
 import datetime as dt
@@ -89,10 +90,12 @@ def fetch_merchants(page, number_of_pages):
     counter = 0
     button_selector = ".cardstack-nextcontent > button:first-of-type"
     selector = 'section.cardstack-section[data-card-name="NEXT_CONTENT"]'
+    flag_end_of_page = False
     while(True):
         try:
             time.sleep(DEFAULT_TIMEOUT)
-            if(not page.query_selector(selector)):
+            flag_end_of_page = not page.query_selector(selector)
+            if(flag_end_of_page):
                 print("Reached end of page...")
                 break
             page.click(button_selector)
@@ -100,11 +103,10 @@ def fetch_merchants(page, number_of_pages):
             ## THIS ONLY HAPPENS WHEN WHILE FAILS TO CHECK IT HAS REACHED THE END
             ## AND WHEN TRYING TO CLICK BUTTON FAILS BECAUSE BUTTON NO LONGER EXISTS
             ## THEREFORE WE RETURN TRUE
-            if(not page.query_selector(selector)):
+            if(flag_end_of_page):
                 print("Reached end of page...")
                 break
-            print(page.query_selector(selector))
-            print(f"Exception HERE: {e}")
+            print(f"Exception: {e}")
             return False
         counter += 1
         if(number_of_pages!="ALL"):
@@ -138,11 +140,13 @@ def run(playwright: Playwright) -> None:
         tries = 0
         flag_success = False
         while(tries < MAX_ERROR_TRIES and not flag_success):
+            url = "https://www.ifood.com.br"
+            user_agent = "Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36"
             browser = playwright.chromium.launch(headless=False)
-            context = browser.new_context()
+            context = browser.new_context(user_agent=user_agent)
             page = context.new_page()
             try:
-                page.goto("https://www.ifood.com.br/")
+                page.goto(url)
                 page.get_by_placeholder("Em qual endereço você está?").click()
                 page.get_by_role("button", name="Buscar endereço e número").click()
                 page.get_by_role("textbox", name="Buscar endereço e número").fill(address)
@@ -153,7 +157,7 @@ def run(playwright: Playwright) -> None:
             except Exception as e:
                 print(f"Exception: {e}")
                 tries += 1
-                if address not in error_lst: error_lst.append(address)
+                if (tries>= MAX_ERROR_TRIES) and (address not in error_lst): error_lst.append(address)
                 context.close()
                 browser.close()
                 continue
@@ -162,7 +166,6 @@ def run(playwright: Playwright) -> None:
                 time.sleep(DEFAULT_TIMEOUT)
                 selector = 'button:has-text("Confirmar localização")'
                 if(not page.query_selector(selector)): ## CHECKING IF "CONFIRMAR LOCALIZAÇÃO" IS ALREADY VISIBLE, IF SO, SKIP NUMBER INSERTION
-                    print("NUMBER FIELD VISIBLE")
                     selector = "input.form-input__field"
                     element = page.wait_for_selector(selector)
                     element.click()
@@ -179,7 +182,7 @@ def run(playwright: Playwright) -> None:
             except Exception as e:
                 print(f"Exception: {e}")
                 tries += 1
-                if address not in error_lst: error_lst.append(address)
+                if (tries>= MAX_ERROR_TRIES) and (address not in error_lst): error_lst.append(address)
                 context.close()
                 browser.close()
                 continue
@@ -189,7 +192,7 @@ def run(playwright: Playwright) -> None:
             except Exception as e:
                 print(f"Exception: {e}")
                 tries += 1
-                if address not in error_lst: error_lst.append(address)
+                if (tries>= MAX_ERROR_TRIES) and (address not in error_lst): error_lst.append(address)
                 context.close()
                 browser.close()
                 continue
@@ -203,7 +206,7 @@ def run(playwright: Playwright) -> None:
                 try_count += 1
             if(try_count >= MAX_ERROR_TRIES):
                 print(f"Max tries exceeded for looping merchants on {address}")
-                if address not in error_lst: error_lst.append(address)
+                if (tries>= MAX_ERROR_TRIES) and (address not in error_lst): error_lst.append(address)
                 tries += 1
                 context.close()
                 browser.close()
@@ -217,7 +220,7 @@ def run(playwright: Playwright) -> None:
                     df_lst.append(df)
                 else:
                     print(f"No HTML on {address}")
-                    if address not in error_lst: error_lst.append(address)
+                    if (tries>= MAX_ERROR_TRIES) and (address not in error_lst): error_lst.append(address)
             # ---------------------
             context.close()
             browser.close()
@@ -232,8 +235,11 @@ def run(playwright: Playwright) -> None:
     else:
         print("An Error has occurred in all addresses fetching task. Please, retry.")
 
-    with open("error_addresses.txt", "w") as f:
-        f.write(str(error_lst))
+    with open("enderecos_com_erro.txt", "w") as f:
+        if(error_lst):
+            f.write(str(error_lst))
+        else:
+            f.write("Nenhum erro durante a coleta!")
 
 
 with sync_playwright() as playwright:
