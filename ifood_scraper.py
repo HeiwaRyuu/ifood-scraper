@@ -3,14 +3,18 @@ from playwright.sync_api import TimeoutError
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import concurrent.futures
 from bs4 import BeautifulSoup
+import json
 import pandas as pd
 import datetime as dt
 import time
 import os
+import random
+
 
 DEFAULT_TIMEOUT = 2
 MAX_ERROR_TRIES = 3
 MAX_THREADS = 1
+USE_PROXY = False
 
 def generate_df(merchants, address):
     try:
@@ -53,8 +57,8 @@ def generate_df(merchants, address):
                 distance = "Sem Informação"
         # have_photo = "Sim" if item.find(class_="cardstack-image").find("img") else "Não"
         footer_info = item.find(class_="merchant-v2__footer").get_text(strip=True) if item.find(class_="merchant-v2__footer") else "Sem Informação"
-        status = "Fechado" if "Fechado" in footer_info else "Aberto"
         delivery_time = footer_info.split("•")[-2]
+        status = "Aberto" if ("min" in delivery_time) else "Fechado"
         delivery_fee = "0" if "Grátis" in footer_info else footer_info.split("•")[-1].replace("R$", "").replace(",", ".")[1:]
 
         try:
@@ -93,13 +97,31 @@ def generate_df(merchants, address):
     return df
 
 
-def fetch_merchants(page, number_of_pages):
+def fetch_merchants(page, number_of_pages, only_open=False):
     counter = 0
     button_selector = ".cardstack-nextcontent > button:first-of-type"
     selector = 'section.cardstack-section[data-card-name="NEXT_CONTENT"]'
     flag_end_of_page = False
     time.sleep(DEFAULT_TIMEOUT*2)
     while(True):
+        if only_open:
+            merchants = page.locator(".merchant-list-v2__wrapper")
+            try:
+                html = merchants.inner_html()
+                soup = BeautifulSoup(html, "html.parser")
+            except Exception as e:
+                print(f"Exception: {e}")
+                continue
+            item_wrappers = soup.find_all(class_="merchant-list-v2__item-wrapper")
+            last_merchant = item_wrappers[-1]
+            footer_info = last_merchant.find(class_="merchant-v2__footer").get_text(strip=True) if last_merchant.find(class_="merchant-v2__footer") else "Sem Informação"
+            delivery_time = footer_info.split("•")[-2]
+            status = "Aberto" if ("min" in delivery_time) else "Fechado"
+            if status == "Fechado":
+                print("Closed Restaurant Has been found!")
+                print(f"Counter for 'Ver mais' button pressed: {counter}\nTotal of {counter+1} pages.")
+                return True
+        
         try:
             time.sleep(DEFAULT_TIMEOUT)
             flag_end_of_page = not page.query_selector(selector)
@@ -125,6 +147,17 @@ def fetch_merchants(page, number_of_pages):
                 return True
     return True
 
+def fetch_proxy():
+    with open("proxy.json", "r", encoding="utf-8") as fd:
+        proxy_data = json.load(fd)
+    return proxy_data
+
+def random_ua(k=1):
+    # returns a random useragent from the latest user agents strings list, weighted
+    # according to observed prevalance
+    ua_pct = {"ua": {"0": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36", "1": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:105.0) Gecko/20100101 Firefox/105.0", "2": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36", "3": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:106.0) Gecko/20100101 Firefox/106.0", "4": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36", "5": "Mozilla/5.0 (X11; Linux x86_64; rv:105.0) Gecko/20100101 Firefox/105.0", "6": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36", "7": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36", "8": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/106.0.0.0 Safari/537.36", "9": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Safari/605.1.15", "10": "Mozilla/5.0 (X11; Linux x86_64; rv:106.0) Gecko/20100101 Firefox/106.0", "11": "Mozilla/5.0 (Windows NT 10.0; rv:105.0) Gecko/20100101 Firefox/105.0", "12": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:105.0) Gecko/20100101 Firefox/105.0", "13": "Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:105.0) Gecko/20100101 Firefox/105.0", "14": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36"}, "pct": {"0": 28.8, "1": 13.28, "2": 10.98, "3": 8.55, "4": 6.25, "5": 5.56, "6": 4.53, "7": 4.27, "8": 3.57, "9": 2.93, "10": 2.99, "11": 2.55, "12": 2.44, "13": 1.7, "14": 1.59}}
+    return random.choices(list(ua_pct['ua'].values()), list(ua_pct['pct'].values()), k=k)
+
 def scrape_address(row):
     print(row)
     error_lst = []
@@ -146,12 +179,18 @@ def scrape_address(row):
         print(f"{address} | {number} | {number_of_pages}")
         tries = 0
         flag_success = False
+        proxy = fetch_proxy()
         while(tries < MAX_ERROR_TRIES and not flag_success):
             url = "https://www.ifood.com.br"
-            user_agent = "Mozilla/5.0 (Windows NT 4.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/37.0.2049.0 Safari/537.36"
-            browser = playwright.chromium.launch(headless=False)
+            user_agent = random_ua()[0] # FETCH RANDOM USER AGENT EVERY SESSION
+            if USE_PROXY:
+                browser = playwright.chromium.launch(headless=True, proxy=proxy)
+            else:
+                browser = playwright.chromium.launch(headless=False)
             context = browser.new_context(user_agent=user_agent)
             page = context.new_page()
+            # Abort based on the request type | ABORTING ANY IMAGE/CSS LOADING
+            page.route("**/*", lambda route: route.abort() if (route.request.resource_type == "image" or route.request.resource_type == "stylesheet") else route.continue_())
             try:
                 page.goto(url)
                 page.get_by_placeholder("Em qual endereço você está?").click()
