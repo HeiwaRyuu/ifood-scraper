@@ -189,8 +189,6 @@ def scrape_address(row):
                 browser = playwright.chromium.launch(headless=False)
             context = browser.new_context(user_agent=user_agent)
             page = context.new_page()
-            # Abort based on the request type | ABORTING ANY IMAGE/CSS LOADING
-            page.route("**/*", lambda route: route.abort() if (route.request.resource_type == "image" or route.request.resource_type == "stylesheet") else route.continue_())
             try:
                 page.goto(url)
                 page.get_by_placeholder("Em qual endereço você está?").click()
@@ -234,6 +232,8 @@ def scrape_address(row):
                 continue
             
             try:
+                # Abort based on the request type | ABORTING ANY IMAGE/CSS LOADING
+                page.route("**/*", lambda route: route.abort() if (route.request.resource_type == "image" or route.request.resource_type == "stylesheet") else route.continue_())
                 page.goto("https://www.ifood.com.br/restaurantes")
             except Exception as e:
                 print(f"Exception: {e}")
